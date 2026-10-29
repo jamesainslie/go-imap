@@ -64,6 +64,19 @@ func writeFetchItems(enc *imapwire.Encoder, numKind imapwire.NumKind, options *i
 		}
 	}
 
+	if options.GmailMsgID {
+		listEnc.Item().Atom("X-GM-MSGID")
+	}
+	if options.GmailThreadID {
+		listEnc.Item().Atom("X-GM-THRID")
+	}
+	if options.GmailLabels {
+		listEnc.Item().Atom("X-GM-LABELS")
+	}
+	if options.Preview {
+		listEnc.Item().Atom("PREVIEW")
+	}
+
 	for _, bs := range options.BodySection {
 		writeFetchItemBodySection(listEnc.Item(), bs)
 	}
@@ -356,6 +369,10 @@ var (
 	_ FetchItemData = FetchItemDataRFC822Size{}
 	_ FetchItemData = FetchItemDataUID{}
 	_ FetchItemData = FetchItemDataBodyStructure{}
+	_ FetchItemData = FetchItemDataGmailMsgID{}
+	_ FetchItemData = FetchItemDataGmailThreadID{}
+	_ FetchItemData = FetchItemDataGmailLabels{}
+	_ FetchItemData = FetchItemDataPreview{}
 )
 
 type discarder interface {
@@ -479,6 +496,44 @@ type FetchItemDataModSeq struct {
 
 func (FetchItemDataModSeq) fetchItemData() {}
 
+// FetchItemDataGmailMsgID holds data returned by FETCH X-GM-MSGID.
+//
+// This requires the X-GM-EXT-1 extension.
+type FetchItemDataGmailMsgID struct {
+	MsgID uint64
+}
+
+func (FetchItemDataGmailMsgID) fetchItemData() {}
+
+// FetchItemDataGmailThreadID holds data returned by FETCH X-GM-THRID.
+//
+// This requires the X-GM-EXT-1 extension.
+type FetchItemDataGmailThreadID struct {
+	ThreadID uint64
+}
+
+func (FetchItemDataGmailThreadID) fetchItemData() {}
+
+// FetchItemDataGmailLabels holds data returned by FETCH X-GM-LABELS.
+// System labels keep their leading backslash, such as `\Inbox`.
+//
+// This requires the X-GM-EXT-1 extension.
+type FetchItemDataGmailLabels struct {
+	Labels []string
+}
+
+func (FetchItemDataGmailLabels) fetchItemData() {}
+
+// FetchItemDataPreview holds data returned by FETCH PREVIEW. Preview is nil
+// when the server answered NIL.
+//
+// This requires the PREVIEW extension.
+type FetchItemDataPreview struct {
+	Preview *string
+}
+
+func (FetchItemDataPreview) fetchItemData() {}
+
 // FetchBodySectionBuffer is a buffer for the data returned by
 // FetchItemBodySection.
 type FetchBodySectionBuffer struct {
@@ -507,7 +562,11 @@ type FetchMessageBuffer struct {
 	BodySection       []FetchBodySectionBuffer
 	BinarySection     []FetchBinarySectionBuffer
 	BinarySectionSize []FetchItemDataBinarySectionSize
-	ModSeq            uint64 // requires CONDSTORE
+	ModSeq            uint64   // requires CONDSTORE
+	GmailMsgID        uint64   // requires X-GM-EXT-1
+	GmailThreadID     uint64   // requires X-GM-EXT-1
+	GmailLabels       []string // requires X-GM-EXT-1
+	Preview           *string  // requires PREVIEW
 }
 
 func (buf *FetchMessageBuffer) populateItemData(item FetchItemData) error {
@@ -554,6 +613,14 @@ func (buf *FetchMessageBuffer) populateItemData(item FetchItemData) error {
 		buf.BinarySectionSize = append(buf.BinarySectionSize, item)
 	case FetchItemDataModSeq:
 		buf.ModSeq = item.ModSeq
+	case FetchItemDataGmailMsgID:
+		buf.GmailMsgID = item.MsgID
+	case FetchItemDataGmailThreadID:
+		buf.GmailThreadID = item.ThreadID
+	case FetchItemDataGmailLabels:
+		buf.GmailLabels = item.Labels
+	case FetchItemDataPreview:
+		buf.Preview = item.Preview
 	default:
 		panic(fmt.Errorf("unsupported fetch item data %T", item))
 	}
@@ -801,6 +868,42 @@ func (c *Client) handleFetch(seqNum uint32) error {
 				return dec.Err()
 			}
 			item = FetchItemDataModSeq{ModSeq: modSeq}
+		case "X-GM-MSGID", "X-GM-THRID":
+			var id uint64
+			if !dec.ExpectSP() || !dec.ExpectModSeq(&id) {
+				return dec.Err()
+			}
+			if attName == "X-GM-MSGID" {
+				item = FetchItemDataGmailMsgID{MsgID: id}
+			} else {
+				item = FetchItemDataGmailThreadID{ThreadID: id}
+			}
+		case "X-GM-LABELS":
+			if !dec.ExpectSP() {
+				return dec.Err()
+			}
+			labels, err := readGmailLabels(dec)
+			if err != nil {
+				return fmt.Errorf("in X-GM-LABELS: %v", err)
+			}
+			item = FetchItemDataGmailLabels{Labels: labels}
+		case "PREVIEW":
+			if !dec.ExpectSP() {
+				return dec.Err()
+			}
+			var atom string
+			if dec.Atom(&atom) {
+				if !dec.Expect(atom == "NIL", "nstring") {
+					return dec.Err()
+				}
+				item = FetchItemDataPreview{}
+				break
+			}
+			var preview string
+			if !dec.ExpectString(&preview) {
+				return dec.Err()
+			}
+			item = FetchItemDataPreview{Preview: &preview}
 		default:
 			return fmt.Errorf("unsupported msg-att name: %q", attName)
 		}
@@ -1323,4 +1426,25 @@ func (lit *fetchLiteralReader) Read(b []byte) (int, error) {
 		lit.ch = nil
 	}
 	return n, err
+}
+
+// readGmailLabels reads an X-GM-LABELS list. System labels are atoms that
+// start with a backslash. The rest are astrings in modified UTF-7, like
+// mailbox names.
+func readGmailLabels(dec *imapwire.Decoder) ([]string, error) {
+	var labels []string
+	err := dec.ExpectList(func() error {
+		var label string
+		if dec.Special('\\') {
+			if !dec.ExpectAtom(&label) {
+				return dec.Err()
+			}
+			label = `\` + label
+		} else if !dec.ExpectMailbox(&label) {
+			return dec.Err()
+		}
+		labels = append(labels, label)
+		return nil
+	})
+	return labels, err
 }

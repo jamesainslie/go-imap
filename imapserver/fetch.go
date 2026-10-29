@@ -180,6 +180,15 @@ func handleFetchAtt(dec *imapwire.Decoder, attName string, options *imap.FetchOp
 			return err
 		}
 		options.BodySection = append(options.BodySection, &section)
+	case "X-GM-MSGID":
+		options.GmailMsgID = true
+	case "X-GM-THRID":
+		options.GmailThreadID = true
+	case "X-GM-LABELS":
+		options.GmailLabels = true
+	case "PREVIEW":
+		// The RFC 8970 LAZY modifier is not supported.
+		options.Preview = true
 	default:
 		return newClientBugError("Unknown FETCH data item")
 	}
@@ -376,6 +385,42 @@ func (w *FetchResponseWriter) WriteRFC822Size(size int64) {
 func (w *FetchResponseWriter) WriteInternalDate(t time.Time) {
 	w.writeItemSep()
 	w.enc.Atom("INTERNALDATE").SP().String(t.Format(internal.DateTimeLayout))
+}
+
+// WriteGmailMsgID writes the message's X-GM-MSGID.
+func (w *FetchResponseWriter) WriteGmailMsgID(id uint64) {
+	w.writeItemSep()
+	w.enc.Atom("X-GM-MSGID").SP().ModSeq(id)
+}
+
+// WriteGmailThreadID writes the message's X-GM-THRID.
+func (w *FetchResponseWriter) WriteGmailThreadID(id uint64) {
+	w.writeItemSep()
+	w.enc.Atom("X-GM-THRID").SP().ModSeq(id)
+}
+
+// WriteGmailLabels writes the message's X-GM-LABELS. Labels that start with
+// a backslash are written as atoms, the rest like mailbox names.
+func (w *FetchResponseWriter) WriteGmailLabels(labels []string) {
+	w.writeItemSep()
+	w.enc.Atom("X-GM-LABELS").SP().List(len(labels), func(i int) {
+		if strings.HasPrefix(labels[i], `\`) {
+			w.enc.Atom(labels[i])
+		} else {
+			w.enc.Mailbox(labels[i])
+		}
+	})
+}
+
+// WritePreview writes the message's PREVIEW. A nil preview is written as NIL.
+func (w *FetchResponseWriter) WritePreview(preview *string) {
+	w.writeItemSep()
+	w.enc.Atom("PREVIEW").SP()
+	if preview == nil {
+		w.enc.NIL()
+		return
+	}
+	w.enc.String(*preview)
 }
 
 // WriteBodySection writes a body section.

@@ -56,6 +56,7 @@ const (
 	CapNotify           Cap = "NOTIFY"             // RFC 5465
 	CapObjectID         Cap = "OBJECTID"           // RFC 8474
 	CapPreview          Cap = "PREVIEW"            // RFC 8970
+	CapGmailExt1        Cap = "X-GM-EXT-1"         // https://developers.google.com/gmail/imap/imap-extensions
 	CapQResync          Cap = "QRESYNC"            // RFC 7162
 	CapQuota            Cap = "QUOTA"              // RFC 9208
 	CapQuotaSet         Cap = "QUOTASET"           // RFC 9208

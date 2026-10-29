@@ -326,6 +326,22 @@ func readSearchKeyWithAtom(criteria *imap.SearchCriteria, dec *imapwire.Decoder,
 			return err
 		}
 		criteria.Or = append(criteria.Or, or)
+	case "X-GM-RAW":
+		var raw string
+		if !dec.ExpectSP() || !dec.ExpectAString(&raw) {
+			return dec.Err()
+		}
+		criteria.GmailRaw = append(criteria.GmailRaw, raw)
+	case "X-GM-MSGID", "X-GM-THRID":
+		var id uint64
+		if !dec.ExpectSP() || !dec.ExpectModSeq(&id) {
+			return dec.Err()
+		}
+		if key == "X-GM-MSGID" {
+			criteria.GmailMsgID = append(criteria.GmailMsgID, id)
+		} else {
+			criteria.GmailThreadID = append(criteria.GmailThreadID, id)
+		}
 	case "$":
 		criteria.UID = append(criteria.UID, imap.SearchRes())
 	default:
