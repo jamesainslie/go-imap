@@ -92,6 +92,33 @@ func ExpectFlag(dec *imapwire.Decoder) (imap.Flag, error) {
 	return canonicalFlag(name), nil
 }
 
+// ExpectGmailLabel reads one Gmail label. System labels are atoms that start
+// with a backslash. The rest are astrings in modified UTF-7, like mailbox
+// names.
+func ExpectGmailLabel(dec *imapwire.Decoder) (string, error) {
+	var label string
+	if dec.Special('\\') {
+		if !dec.ExpectAtom(&label) {
+			return "", fmt.Errorf("in Gmail label: %w", dec.Err())
+		}
+		return `\` + label, nil
+	}
+	if !dec.ExpectMailbox(&label) {
+		return "", fmt.Errorf("in Gmail label: %w", dec.Err())
+	}
+	return label, nil
+}
+
+// EncodeGmailLabel writes one Gmail label. Labels that start with a backslash
+// are written as atoms, the rest like mailbox names.
+func EncodeGmailLabel(enc *imapwire.Encoder, label string) {
+	if strings.HasPrefix(label, `\`) {
+		enc.Atom(label)
+	} else {
+		enc.Mailbox(label)
+	}
+}
+
 func ExpectMailboxAttrList(dec *imapwire.Decoder) ([]imap.MailboxAttr, error) {
 	var attrs []imap.MailboxAttr
 	err := dec.ExpectList(func() error {

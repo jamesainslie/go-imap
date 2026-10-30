@@ -404,11 +404,7 @@ func (w *FetchResponseWriter) WriteGmailThreadID(id uint64) {
 func (w *FetchResponseWriter) WriteGmailLabels(labels []string) {
 	w.writeItemSep()
 	w.enc.Atom("X-GM-LABELS").SP().List(len(labels), func(i int) {
-		if strings.HasPrefix(labels[i], `\`) {
-			w.enc.Atom(labels[i])
-		} else {
-			w.enc.Mailbox(labels[i])
-		}
+		internal.EncodeGmailLabel(w.enc.Encoder, labels[i])
 	})
 }
 

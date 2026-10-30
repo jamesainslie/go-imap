@@ -189,3 +189,71 @@ func TestFetchPreview(t *testing.T) {
 		t.Errorf("preview of 8 = %#v, want nil for NIL", msgs)
 	}
 }
+
+func TestStoreGmailLabels(t *testing.T) {
+	tests := []struct {
+		name  string
+		store imap.StoreGmailLabels
+		want  string
+	}{
+		{
+			name:  "add",
+			store: imap.StoreGmailLabels{Op: imap.StoreFlagsAdd, Labels: []string{`\Important`, "Work Stuff", "Work/Q3", "Été"}},
+			want:  `UID STORE 7 +X-GM-LABELS (\Important "Work Stuff" "Work/Q3" "&AMk-t&AOk-")`,
+		},
+		{
+			name:  "del silent",
+			store: imap.StoreGmailLabels{Op: imap.StoreFlagsDel, Silent: true, Labels: []string{`\Inbox`}},
+			want:  `UID STORE 7 -X-GM-LABELS.SILENT (\Inbox)`,
+		},
+		{
+			name:  "set empty",
+			store: imap.StoreGmailLabels{Op: imap.StoreFlagsSet},
+			want:  `UID STORE 7 X-GM-LABELS ()`,
+		},
+		{
+			name:  "inbox",
+			store: imap.StoreGmailLabels{Op: imap.StoreFlagsSet, Labels: []string{"inbox"}},
+			want:  `UID STORE 7 X-GM-LABELS (INBOX)`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reply := "TAG OK STORE completed\r\n"
+			if !tt.store.Silent {
+				reply = `* 1 FETCH (UID 7 X-GM-LABELS (\Important "Work Stuff"))` + "\r\n" + reply
+			}
+			client := newScriptedClient(t, scriptStep{want: tt.want, reply: reply})
+			msgs, err := client.StoreGmailLabels(imap.UIDSetNum(7), &tt.store, nil).Collect()
+			if err != nil {
+				t.Fatalf("StoreGmailLabels().Collect() = %v", err)
+			}
+			if tt.store.Silent {
+				if len(msgs) != 0 {
+					t.Errorf("got %d messages, want 0", len(msgs))
+				}
+				return
+			}
+			if len(msgs) != 1 {
+				t.Fatalf("got %d messages, want 1", len(msgs))
+			}
+			if want := []string{`\Important`, "Work Stuff"}; msgs[0].UID != 7 || !reflect.DeepEqual(msgs[0].GmailLabels, want) {
+				t.Errorf("UID, GmailLabels = %d, %q, want 7, %q", msgs[0].UID, msgs[0].GmailLabels, want)
+			}
+		})
+	}
+}
+
+func TestStoreGmailLabelsUnchangedSince(t *testing.T) {
+	client := newScriptedClient(t, scriptStep{
+		want:  `STORE 2:3 (UNCHANGEDSINCE 42) +X-GM-LABELS.SILENT ("Work")`,
+		reply: "TAG OK STORE completed\r\n",
+	})
+	store := &imap.StoreGmailLabels{Op: imap.StoreFlagsAdd, Silent: true, Labels: []string{"Work"}}
+	options := &imap.StoreOptions{UnchangedSince: 42}
+	var seqSet imap.SeqSet
+	seqSet.AddRange(2, 3)
+	if err := client.StoreGmailLabels(seqSet, store, options).Close(); err != nil {
+		t.Fatalf("StoreGmailLabels().Close() = %v", err)
+	}
+}

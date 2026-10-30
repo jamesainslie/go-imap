@@ -92,6 +92,15 @@ type SessionMove interface {
 	Move(w *MoveWriter, numSet imap.NumSet, dest string) error
 }
 
+// SessionGmail is an IMAP session which supports storing Gmail labels with
+// STORE X-GM-LABELS, part of the X-GM-EXT-1 extension.
+type SessionGmail interface {
+	Session
+
+	// Selected state
+	StoreGmailLabels(w *FetchWriter, numSet imap.NumSet, store *imap.StoreGmailLabels) error
+}
+
 // SessionIMAP4rev2 is an IMAP session which supports IMAP4rev2.
 type SessionIMAP4rev2 interface {
 	Session

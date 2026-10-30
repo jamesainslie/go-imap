@@ -1434,14 +1434,9 @@ func (lit *fetchLiteralReader) Read(b []byte) (int, error) {
 func readGmailLabels(dec *imapwire.Decoder) ([]string, error) {
 	var labels []string
 	err := dec.ExpectList(func() error {
-		var label string
-		if dec.Special('\\') {
-			if !dec.ExpectAtom(&label) {
-				return dec.Err()
-			}
-			label = `\` + label
-		} else if !dec.ExpectMailbox(&label) {
-			return dec.Err()
+		label, err := internal.ExpectGmailLabel(dec)
+		if err != nil {
+			return err
 		}
 		labels = append(labels, label)
 		return nil
