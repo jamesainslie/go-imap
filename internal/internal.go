@@ -109,14 +109,31 @@ func ExpectGmailLabel(dec *imapwire.Decoder) (string, error) {
 	return label, nil
 }
 
-// EncodeGmailLabel writes one Gmail label. Labels that start with a backslash
-// are written as atoms, the rest like mailbox names.
+// EncodeGmailLabel writes one Gmail label. A system label, a backslash
+// followed by ASCII atom characters, is written as an atom. Anything else,
+// including a backslash label that is not a valid atom, is written like a
+// mailbox name, quoted or as a literal, so a label can never end its token
+// or the command early.
 func EncodeGmailLabel(enc *imapwire.Encoder, label string) {
-	if strings.HasPrefix(label, `\`) {
+	if isSystemGmailLabel(label) {
 		enc.Atom(label)
 	} else {
 		enc.Mailbox(label)
 	}
+}
+
+// isSystemGmailLabel reports whether label is a backslash and one or more
+// ASCII atom characters, the form Gmail's system labels take.
+func isSystemGmailLabel(label string) bool {
+	if len(label) < 2 || label[0] != '\\' {
+		return false
+	}
+	for i := 1; i < len(label); i++ {
+		if ch := label[i]; ch >= 0x80 || !imapwire.IsAtomChar(ch) {
+			return false
+		}
+	}
+	return true
 }
 
 func ExpectMailboxAttrList(dec *imapwire.Decoder) ([]imap.MailboxAttr, error) {
