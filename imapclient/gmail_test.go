@@ -300,3 +300,37 @@ func TestFetchGmailMessageRFC822WithoutEnvelope(t *testing.T) {
 		t.Errorf("second message UID = %d, want 8", msgs[1].UID)
 	}
 }
+
+// A MESSAGE/RFC822 part in the standard form, with the envelope, body
+// structure and line count after its size, still reads them.
+func TestFetchMessageRFC822WithEnvelope(t *testing.T) {
+	client := newScriptedClient(t, scriptStep{
+		want: "UID FETCH 7 (UID BODYSTRUCTURE)",
+		reply: `* 1 FETCH (UID 7 BODYSTRUCTURE ("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 342 ` +
+			`("Mon, 24 Aug 2015 09:20:11 +0200" "inner" (("A" NIL "a" "example.com")) NIL NIL NIL NIL NIL NIL "<inner@x>") ` +
+			`("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" 12 1 NIL NIL NIL) 9 NIL ("ATTACHMENT" NIL) NIL))` + "\r\n" +
+			"TAG OK FETCH completed\r\n",
+	})
+	options := &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}}
+	msgs, err := client.Fetch(imap.UIDSetNum(7), options).Collect()
+	if err != nil {
+		t.Fatalf("Fetch().Collect() = %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	sp, ok := msgs[0].BodyStructure.(*imap.BodyStructureSinglePart)
+	if !ok {
+		t.Fatalf("BodyStructure = %#v, want a single part", msgs[0].BodyStructure)
+	}
+	msg := sp.MessageRFC822
+	if msg == nil || msg.Envelope == nil || msg.Envelope.Subject != "inner" || msg.NumLines != 9 {
+		t.Fatalf("MessageRFC822 = %#v, want the inner envelope and 9 lines", msg)
+	}
+	if inner, ok := msg.BodyStructure.(*imap.BodyStructureSinglePart); !ok || inner.Subtype != "PLAIN" {
+		t.Errorf("inner body structure = %#v, want TEXT/PLAIN", msg.BodyStructure)
+	}
+	if sp.Extended == nil || sp.Extended.Disposition == nil || !strings.EqualFold(sp.Extended.Disposition.Value, "attachment") {
+		t.Errorf("extension = %#v, want disposition attachment", sp.Extended)
+	}
+}
