@@ -257,3 +257,46 @@ func TestStoreGmailLabelsUnchangedSince(t *testing.T) {
 		t.Fatalf("StoreGmailLabels().Close() = %v", err)
 	}
 }
+
+// Gmail describes some attached messages as a basic part: it leaves out the
+// envelope, body structure and line count RFC 3501 requires after a
+// MESSAGE/RFC822 part's size, and sends the extension data in their place.
+// The client reads such a part as a single part with no MessageRFC822 and
+// keeps reading the answer, instead of failing it and the connection.
+func TestFetchGmailMessageRFC822WithoutEnvelope(t *testing.T) {
+	client := newScriptedClient(t, scriptStep{
+		want: "UID FETCH 7:8 (UID BODYSTRUCTURE)",
+		reply: `* 1 FETCH (UID 7 BODYSTRUCTURE (("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" 3640 73 NIL NIL NIL)` +
+			`("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 71499 NIL ("ATTACHMENT" NIL) NIL) "MIXED" ("BOUNDARY" "b1") NIL NIL))` + "\r\n" +
+			`* 2 FETCH (UID 8 BODYSTRUCTURE ("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" 12 1 NIL NIL NIL))` + "\r\n" +
+			"TAG OK FETCH completed\r\n",
+	})
+	options := &imap.FetchOptions{UID: true, BodyStructure: &imap.FetchItemBodyStructure{Extended: true}}
+	msgs, err := client.Fetch(imap.UIDSet{imap.UIDRange{Start: 7, Stop: 8}}, options).Collect()
+	if err != nil {
+		t.Fatalf("Fetch().Collect() = %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("got %d messages, want 2", len(msgs))
+	}
+	mp, ok := msgs[0].BodyStructure.(*imap.BodyStructureMultiPart)
+	if !ok || len(mp.Children) != 2 {
+		t.Fatalf("BodyStructure of 7 = %#v, want a multipart of two", msgs[0].BodyStructure)
+	}
+	att, ok := mp.Children[1].(*imap.BodyStructureSinglePart)
+	if !ok {
+		t.Fatalf("second part = %#v, want a single part", mp.Children[1])
+	}
+	if att.Type != "MESSAGE" || att.Subtype != "RFC822" || att.Size != 71499 || att.MessageRFC822 != nil {
+		t.Errorf("attached message = %s/%s size %d MessageRFC822 %#v", att.Type, att.Subtype, att.Size, att.MessageRFC822)
+	}
+	if att.Extended == nil || att.Extended.Disposition == nil || !strings.EqualFold(att.Extended.Disposition.Value, "attachment") {
+		t.Errorf("attached message extension = %#v, want disposition attachment", att.Extended)
+	}
+	if mp.Subtype != "MIXED" {
+		t.Errorf("multipart subtype = %q, want MIXED", mp.Subtype)
+	}
+	if msgs[1].UID != 8 {
+		t.Errorf("second message UID = %d, want 8", msgs[1].UID)
+	}
+}

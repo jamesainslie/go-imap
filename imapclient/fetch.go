@@ -1093,7 +1093,10 @@ func readBodyType1part(dec *imapwire.Decoder, typ string, options *Options) (*im
 		return &bs, nil
 	}
 
-	if strings.EqualFold(bs.Type, "message") && (strings.EqualFold(bs.Subtype, "rfc822") || strings.EqualFold(bs.Subtype, "global")) {
+	// Gmail leaves out the envelope, body and line count of some attached
+	// messages and sends the extension data in their place, so a message
+	// part without an envelope is read as a basic part.
+	if strings.EqualFold(bs.Type, "message") && (strings.EqualFold(bs.Subtype, "rfc822") || strings.EqualFold(bs.Subtype, "global")) && dec.PeekSpecial('(') {
 		var msg imap.BodyStructureMessageRFC822
 
 		msg.Envelope, err = readEnvelope(dec, options)
