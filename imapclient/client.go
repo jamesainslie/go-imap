@@ -616,7 +616,7 @@ func (c *Client) read() {
 			break
 		}
 		if err := c.readResponse(); err != nil {
-			c.decErr = err
+			c.decErr = asParseError(err, c.dec.Err())
 			break
 		}
 		if c.greetingErr != nil {
